@@ -1,0 +1,125 @@
+# Trimming and mapping WGS data
+# QC- Trimming - mapping - I.peakcalling - II.visualization - III.motif search - IV. integrated analysis
+ssh wanlu_teaching@10.105.100.153
+password: 111111
+# tmux for terminal multiplexer ctrl+B+D
+tmux new -s [yourname]
+# Press CTRL+B at the same time, then press D
+#Re attach to your session from terminal
+tmux attach -t [yourname]
+# Kill session
+tmux kill-session -t [yourname]
+# List current available sessions on server
+tmux ls
+
+### QC
+### ChIP-seq数据上游分析：
+#ChIP-seq的上游数据处理分析[从fastq→bam/bigwig]和WGS类似1. Quality control 2. Alignment 3. Post-alignment processing 4. IGV
+#qc-star/samon-featurecount  sc cellranger
+
+#1. Quality control 
+bytlib load Fastqc
+fastqc - view html
+bytlib load cutadapt
+##双向
+cutadapt -u -5 -U -5 -o SRR13907325_trimmed_1.fastq -p SRR13907325_trimmed_2.fastq SRR13907325_1.fastq SRR13907325_2.fastq
+##单向
+cutadapt
+#2. Alignment - Aligning/Mapping the data with bowtie
+bytlib load bowtie-1.1.2
+bowtie-build *.fasta Name
+ls -lah
+bowtie -S ~/Week2/yourname/reference/standard -1 SRR13907325_trimmed_1.fastq -2 SRR13907325_trimmed_2.fastq SRR13907325_aligned.sam
+# or
+bowtie -S -v 0 ~/Week2/yourname/reference/SARS_COV2 -1 SRR13907325_trimmed_1.fas tq -2 SRR13907325_trimmed_2.fastq SRR13907325_aligned_v0.sam
+# reads processed: 100000 # reads with at least one reported alignment: 84686 (84.69%) # reads that failed to align: 15314 (15.31%) Reported 84686 paired-end alignments to 1 output stream(s)
+## head SRR13907325_aligned.sam 2 head SRR13907325_aligned_v0.sam 3 wc -l SRR13907325_aligned.sam 4 wc -l SRR13907325_aligned_v0.sam
+#3. Post-alignment processing 
+
+#4. IGV - View the output with IGV
+bytlib load samtools-1.9
+samtools view -bSF 4 -o SRR13907325_aligned.bam SRR13907325_aligned.sam
+samtools sort -o SRR13907325_aligned_srt.bam SRR13907325_aligned.bam
+samtools rmdup SRR13907325_aligned_srt.bam SRR13907325_aligned_srt_rmdup.bam
+samtools index SRR13907325_aligned_srt_rmdup.bam
+head SRR13907325_aligned_srt_rmdup.bam
+samtools view SRR13907325_aligned.bam | head
+
+##samtools
+###将sam文件转换成bam文件
+samtools view -bS abc.sam > abc.bam
+BAM转换为SAM
+samtools view -h -o out.sam out.bam 
+提取比对到参考序列上的比对结果
+samtools view -bF 4 abc.bam > abc.F.bam
+提取paired reads中两条reads都比对到参考序列上的比对结果，只需要把两个4+8的值12作为过滤参数即可 
+ samtools view -bF 12 abc.bam > abc.F12.bam
+提取没有比对到参考序列上的比对结果
+ samtools view -bf 4 abc.bam > abc.f.bam
+提取bam文件中比对到caffold1上的比对结果，并保存到sam文件格式
+samtools view abc.bam scaffold1 > scaffold1.sam
+提取scaffold1上能比对到30k到100k区域的比对结果
+samtools view abc.bam scaffold1:30000-100000 $gt; scaffold1_30k-100k.sam
+根据fasta文件，将 header 加入到 sam 或 bam 文件中
+samtools view -T genome.fasta -h scaffold1.sam > scaffold1.h.sam
+## scp wanlu_teaching@10.105.100.153:~/Week2/yourname/reference/SARS_COV2_isolate_W uhan_Hu_1.fasta ./
+
+## bamCoverage
+bytlib load deeptools-3.3.1 2 
+bamCoverage -b $yourbam.bam --normalizeUsing RPKM -o $yourname.bw 
+##可以尝试 4 bamCoverage -b $yourbam.bam --normalizeUsing RPKM -bs 10 -o $yourname_bs10.bw
+
+# ChIP-seq数据下游分析：
+##1. Call ChIPseq peaks with MACS ： https://github.com/taoliu/MACS/
+###a. Call peaks
+bytlib load MACS2/2.2.7.1
+macs2 callpeak -t resultls_align_sort_rmdup.bam -c contrast_input_align_sort_rmdup.bam -f BAM -g hs -n Result_vs_Contrast  --call-summits
+#### other parameters you can play with: -g, --min-length, --max-gap, --nolambda
+###b. View peaks (Bed format, narrowPeak format, wig or bedgraph(check the default output ofmacs))
+more H3K4me3_vs_input_chr1_peaks.narrowPeak
+more H3K4me3_vs_input_chr1_peaks.xls
+more H3K4me3_vs_input_chr1_summits.bed
+###c. View peaks with IGV
+
+##2. Annotate Peaks : http://homer.ucsd.edu/homer/ngs/annotation.html
+### a. Use homer to do peak annotation
+bytlib load homer
+sed -i 's/^/chr&/g' H3K27me3_rep1_chr1_summits.bed
+##由于homer软件的annotation是带有chr的，所以我们需要在summit.bed⽂件中加⼊chr
+annotatePeaks.pl your_peak_summits.bed hg38 -size given -annStats your_peak_annStats.txt > your_peak_Annotation.txt
+### b. Plot pie chart in R
+R
+##put your working directory here
+setwd("/Users/wanluliu/Documents/04Teaching/2021/[next]2021ZJU硕⼠/Week5")
+##read in annotation statistics files
+stat=read.delim("H3K4me3_vs_input_chr1_summits_annStat.txt")
+head(stat,n=15)
+class(stat[,1])
+class(stat[,2])
+class(stat[,3])
+plot pie chart
+pie(as.numeric(as.character(stat[1:11,2])),labels=stat[1:11,1])
+#a better version pie chart (with percentage)
+percentage=as.numeric(as.character(stat[1:11,2]))/sum(as.numeric(as.character(stat[1:11,2])))*100
+head(percentage)
+percentage=round(percentage,2) 5 label=paste0(stat[1:11,1],":",percentage,"%") 6 pie(as.numeric(as.character(stat[1:11,2])),labels=label)
+## 3. Motif calling : http://homer.ucsd.edu/homer/ngs/peakMotifs.html
+### a. Use homer to do motif calling
+bytlib load homer
+mkdir motif
+findMotifsGenome.pl H3K4me3_vs_input_chr1_summits.bed hg38 ./motif -size 200 -preparsedDir ./motif/
+## 4. metaplot : https://deeptools.readthedocs.io/en/develop/
+### a. Plot over the peaks called by MACS2
+bytlib load deeptools-3.3.1
+computeMatrix reference-point -S your_H3K4me3_ChIP.bw your_H3K4me3_ChIPinput.bw-R your_peak_summits.bed -b 2000 -a 2000 -out H3K4me3_chr1_input_over_H3K4me3peaks.tab.gz
+plotHeatmap -m H3K4me3_chr1_input_over_H3K4me3peaks.tab.gz -out H3K4me3_chr1_input_over_H3K4me3peaks_Blues.pdf --colorMap Blues
+##可以尝试改颜⾊
+plotHeatmap -m H3K4me3_chr1_input_over_H3K4me3peaks.tab.gz -out H3K4me3_chr1_inp
+ut_over_H3K4me3peaks_Jet.pdf --colorMap jet
+### b. Plot over protein coding genes
+bytlib load deeptools-3.3.1
+##为什么这⾥⽤scale-region⽽上⾯⽤的是reference-point? 这两个参数有什么区别？ 3 computeMatrix scale-regions -S your_H3K4me3_ChIP.bw your_H3K4me3_ChIPinput.bw - 
+R Homo_sapiens.GRCh38.97.chr1.PCG.bed -b 2000 -a 2000 -out H3K4me3_input_chr1_PCG.tab.gz
+plotHeatmap -m H3K4me3_input_chr1_PCG.tab.gz -out H3K4me3_chr1_input_over_ProteinCodingGenes_lues.pdf --colorMap Blues
+##可以尝试改颜⾊
+
